@@ -116,3 +116,85 @@ The following additional options are available:
 * `--debug` — use debug interpreter
 
 See the documentation for the [Interpreter backend](Interpreter.md) for more details.
+
+
+### Effect Summary Mode
+
+```
+spectec [option] file ... --effects [-o file.csv]
+```
+This performs checking and extracts a CSV of *effect summaries* for
+loop-and-jump-free instructions (including `call` / `call_indirect`,
+excluding `block`, `loop`, `if`, `br`, `return`, and similar control).
+
+The extraction is Wasm-specific: it reads `Instr_ok` for stack arity,
+`Step` / `Step_pure` / `Step_read` for region footprints and traps, and
+numeric auxiliary definitions for per-operator `mayTrap` (e.g. `i32.add`
+vs `i32.div_s`). Residual rewrites are followed (`local.tee` → `local.set`,
+`memory.fill` → `store`).
+
+Columns:
+
+```
+instruction,pops,pushes,reads,writes,mayTrap,mayDiverge
+```
+
+`call` / `call_indirect` use a conservative non-local footprint
+(`glob(*)`, `mem`, `table`) and `mayDiverge=true`; that bound is not
+stated in the spec. Saturating conversions (`trunc_sat`) are treated as
+non-trapping builtins.
+
+If `-o` is omitted, CSV is written to stdout.
+
+Example:
+
+```
+spectec wasm-2.0/*.spectec --effects -o effects.csv
+```
+
+
+### Atom Semantics Mode
+
+```
+spectec [option] file ... --atom-sem [-o file.json]
+```
+This performs checking and extracts a JSON of *closed atom semantics* for
+the gapped-rule alphabet: `drop`, `local.get`, `local.set`, `local.tee`,
+plus `nop` / `global.get` / `global.set` when present.
+
+Each entry is a residual-free transformer on the operand stack and the
+local/global maps (`$local` / `$with_local` / `$global` / `$with_global`).
+`local.tee` is closed through its rewrite to `local.set`. Extraction fails
+if a target instruction does not fall into this fragment.
+
+If `-o` is omitted, JSON is written to stdout.
+
+Example:
+
+```
+spectec wasm-2.0/*.spectec --atom-sem -o atom_sem.json
+```
+
+
+### Lacuna Export Mode
+
+```
+spectec [option] file ... --export-lacuna -o dir
+```
+This performs checking and writes both Lacuna artifacts into `dir`
+(created if missing):
+
+* `effects.csv` — same as `--effects`
+* `atom_sem.json` — same as `--atom-sem`
+
+`-o` is required and must name a directory (not a file).
+
+Example:
+
+```
+spectec wasm-1.0/*.spectec --export-lacuna -o ../export/wasm-1.0
+spectec wasm-2.0/*.spectec --export-lacuna -o ../export/wasm-2.0
+spectec wasm-3.0/*.spectec --export-lacuna -o ../export/wasm-3.0
+```
+
+From `specification/`, `make export-lacuna` writes all three directories.

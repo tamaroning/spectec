@@ -81,6 +81,24 @@ testpromote:
 	@(cd ../spectec/src && make testpromote)
 
 
+# Lacuna export
+
+export-lacuna: export-lacuna-wasm-1.0 export-lacuna-wasm-2.0 export-lacuna-wasm-3.0
+	@echo All Wasm lacuna exports written OK.
+
+export-lacuna-wasm-1.0: $(EXE)
+	$(EXE) wasm-1.0/*.spectec --export-lacuna -o ../export/wasm-1.0
+	@echo Wasm 1.0 lacuna export written to ../export/wasm-1.0
+
+export-lacuna-wasm-2.0: $(EXE)
+	$(EXE) wasm-2.0/*.spectec --export-lacuna -o ../export/wasm-2.0
+	@echo Wasm 2.0 lacuna export written to ../export/wasm-2.0
+
+export-lacuna-wasm-3.0: $(EXE)
+	$(EXE) wasm-3.0/*.spectec --export-lacuna -o ../export/wasm-3.0
+	@echo Wasm 3.0 lacuna export written to ../export/wasm-3.0
+
+
 # Executable
 
 $(EXE): spectec

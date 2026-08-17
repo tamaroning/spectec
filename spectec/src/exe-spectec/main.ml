@@ -13,6 +13,9 @@ type target =
  | Prose of bool
  | Splice of Backend_splice.Config.t
  | Interpreter of string list
+ | Effects
+ | AtomSem
+ | ExportLacuna
 
 type pass =
   | Sub
@@ -164,6 +167,16 @@ let cmd_error msg =
   prerr_endline (Sys.argv.(0) ^ ": " ^ msg);
   exit 2
 
+let rec ensure_dir path =
+  if Sys.file_exists path then begin
+    if not (Sys.is_directory path) then
+      cmd_error (path ^ ": not a directory")
+  end else begin
+    let parent = Filename.dirname path in
+    if parent <> path && parent <> "" then ensure_dir parent;
+    Sys.mkdir path 0o755
+  end
+
 let add_arg source =
   let args =
     match !file_kind with
@@ -204,6 +217,12 @@ let argspec = Arg.align (
   "--prose-rst", Arg.Unit (fun () -> target := Prose false), " Generate prose";
   "--interpreter", Arg.Rest_all (fun args -> target := Interpreter args),
     " Generate interpreter";
+  "--effects", Arg.Unit (fun () -> target := Effects),
+    " Extract loop/jump-free instruction effect summaries as CSV";
+  "--atom-sem", Arg.Unit (fun () -> target := AtomSem),
+    " Extract closed local/drop/global atom semantics as JSON";
+  "--export-lacuna", Arg.Unit (fun () -> target := ExportLacuna),
+    " Write effects.csv and atom_sem.json to the -o directory";
   "--debug", Arg.Unit (fun () -> Backend_interpreter.Debugger.debug := true),
     " Debug interpreter";
   "--unified-vars", Arg.Unit (fun () -> Il2al.Unify.rename := false),
@@ -280,7 +299,11 @@ let () =
     if !print_final_il && not !print_all_il then print_il il;
 
     let al =
-      if not !print_al && !print_al_o = "" && (!target = Check || !target = Ast || !target = Latex) then []
+      if not !print_al && !print_al_o = ""
+         && (!target = Check || !target = Ast || !target = Latex
+             || !target = Effects || !target = AtomSem
+             || !target = ExportLacuna)
+      then []
       else (
         log "Translating to AL...";
         let interp = match !target with
@@ -390,6 +413,49 @@ let () =
       Backend_interpreter.Ds.init al;
       log "Interpreting...";
       Backend_interpreter.Runner.run args
+
+    | Effects ->
+      log "Extracting effect summaries...";
+      let summaries = Backend_effects.Extract.extract il in
+      (match !odsts with
+      | [] ->
+        Backend_effects.Print.output stdout summaries
+      | [odst] ->
+        Out_channel.with_open_text odst (fun oc ->
+          Backend_effects.Print.output oc summaries
+        )
+      | _ -> cmd_error "too many output file names"
+      )
+
+    | AtomSem ->
+      log "Extracting atom semantics...";
+      let atoms = Backend_effects.Extract.extract_atoms il in
+      (match !odsts with
+      | [] ->
+        Backend_effects.Print.output_atoms stdout atoms
+      | [odst] ->
+        Out_channel.with_open_text odst (fun oc ->
+          Backend_effects.Print.output_atoms oc atoms
+        )
+      | _ -> cmd_error "too many output file names"
+      )
+
+    | ExportLacuna ->
+      log "Exporting lacuna artifacts...";
+      (match !odsts with
+      | [] -> cmd_error "missing output directory (use -o DIR)"
+      | [odst] ->
+        ensure_dir odst;
+        let summaries = Backend_effects.Extract.extract il in
+        let atoms = Backend_effects.Extract.extract_atoms il in
+        Out_channel.with_open_text (Filename.concat odst "effects.csv") (fun oc ->
+          Backend_effects.Print.output oc summaries
+        );
+        Out_channel.with_open_text (Filename.concat odst "atom_sem.json") (fun oc ->
+          Backend_effects.Print.output_atoms oc atoms
+        )
+      | _ -> cmd_error "too many output file names"
+      )
     );
     log "Complete."
   with

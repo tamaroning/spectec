@@ -1,0 +1,46 @@
+{
+  "atoms": [
+    {
+      "instruction": "drop",
+      "pop": 1,
+      "push": [],
+      "writes": []
+    },
+    {
+      "instruction": "local.get",
+      "pop": 0,
+      "push": [{"region": "local", "idx": "x"}],
+      "writes": []
+    },
+    {
+      "instruction": "local.set",
+      "pop": 1,
+      "push": [],
+      "writes": [{"region": "local", "idx": "x", "from": {"pop": 0}}]
+    },
+    {
+      "instruction": "local.tee",
+      "pop": 1,
+      "push": [{"pop": 0}],
+      "writes": [{"region": "local", "idx": "x", "from": {"pop": 0}}]
+    },
+    {
+      "instruction": "nop",
+      "pop": 0,
+      "push": [],
+      "writes": []
+    },
+    {
+      "instruction": "global.get",
+      "pop": 0,
+      "push": [{"region": "glob", "idx": "x"}],
+      "writes": []
+    },
+    {
+      "instruction": "global.set",
+      "pop": 1,
+      "push": [],
+      "writes": [{"region": "glob", "idx": "x", "from": {"pop": 0}}]
+    }
+  ]
+}

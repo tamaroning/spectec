@@ -1,0 +1,40 @@
+; Golden and smoke tests for --effects CSV output.
+; Run `dune promote` after intentional output changes.
+
+(rule
+  (targets effects.act)
+  (deps
+    (file ../src/exe-spectec/main.exe)
+    (glob_files ../../specification/wasm-2.0/*.spectec)
+  )
+  (action
+    (with-stdout-to effects.act
+      (system "../src/exe-spectec/main.exe ../../../../specification/wasm-2.0/*.spectec --effects")
+    )
+  )
+)
+
+(rule (alias runtest) (deps effects.act) (action (diff expected/effects.csv effects.act)))
+(rule
+  (alias runtest)
+  (deps effects.act check_effects.py)
+  (action (run python3 check_effects.py effects.act)))
+
+(rule
+  (targets atom_sem.act)
+  (deps
+    (file ../src/exe-spectec/main.exe)
+    (glob_files ../../specification/wasm-2.0/*.spectec)
+  )
+  (action
+    (with-stdout-to atom_sem.act
+      (system "../src/exe-spectec/main.exe ../../../../specification/wasm-2.0/*.spectec --atom-sem")
+    )
+  )
+)
+
+(rule (alias runtest) (deps atom_sem.act) (action (diff expected/atom_sem.json atom_sem.act)))
+(rule
+  (alias runtest)
+  (deps atom_sem.act check_atoms.py)
+  (action (run python3 check_atoms.py atom_sem.act)))
