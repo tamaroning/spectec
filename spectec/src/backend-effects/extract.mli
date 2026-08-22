@@ -9,8 +9,13 @@ type region =
   | Local of string
   | Glob of string
   | GlobStar
-  | Mem
+  | Mem of string
   | Table
+  | Elem
+  | Data
+  | Struct
+  | Array
+  | Exn
 
 type summary = {
   name : string;
@@ -19,7 +24,9 @@ type summary = {
   reads : region list;
   writes : region list;
   may_trap : bool;
+  may_throw : bool;
   may_diverge : bool;
+  may_nondet : bool;
 }
 
 val string_of_arity : arity -> string

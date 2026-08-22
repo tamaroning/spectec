@@ -21,6 +21,28 @@
   (action (run python3 check_effects.py effects.act)))
 
 (rule
+  (targets effects_wasm3.act)
+  (deps
+    (file ../src/exe-spectec/main.exe)
+    (glob_files ../../specification/wasm-3.0/*.spectec)
+  )
+  (action
+    (with-stdout-to effects_wasm3.act
+      (system "../src/exe-spectec/main.exe ../../../../specification/wasm-3.0/*.spectec --effects")
+    )
+  )
+)
+
+(rule
+  (alias runtest)
+  (deps effects_wasm3.act)
+  (action (diff expected/effects-wasm-3.0.csv effects_wasm3.act)))
+(rule
+  (alias runtest)
+  (deps effects_wasm3.act check_effects.py)
+  (action (run python3 check_effects.py effects_wasm3.act)))
+
+(rule
   (targets atom_sem.act)
   (deps
     (file ../src/exe-spectec/main.exe)

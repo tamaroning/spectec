@@ -20,10 +20,13 @@ let row s =
     csv_escape (string_of_regions s.reads);
     csv_escape (string_of_regions s.writes);
     string_of_bool s.may_trap;
+    string_of_bool s.may_throw;
     string_of_bool s.may_diverge;
+    string_of_bool s.may_nondet;
   ]
 
-let header = "instruction,pops,pushes,reads,writes,mayTrap,mayDiverge"
+let header =
+  "instruction,pops,pushes,reads,writes,mayTrap,mayThrow,mayDiverge,mayNondet"
 
 let to_string summaries =
   String.concat "\n" (header :: List.map row summaries) ^ "\n"

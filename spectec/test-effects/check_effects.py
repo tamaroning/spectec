@@ -20,8 +20,13 @@ def main(path: str) -> None:
     overlap = names & CONTROL
     assert not overlap, f"control instructions present: {overlap}"
 
+    for col in ("mayTrap", "mayThrow", "mayDiverge", "mayNondet"):
+        assert col in next(iter(rows.values())), f"missing column {col}"
+
     add = rows["i32.add"]
     assert add["mayTrap"] == "false", add
+    assert add["mayThrow"] == "false", add
+    assert add["mayNondet"] == "false", add
     assert add["pops"] == "2" and add["pushes"] == "1", add
 
     div = rows["i32.div_s"]
@@ -34,16 +39,54 @@ def main(path: str) -> None:
     assert tee["mayTrap"] == "false", tee
 
     fill = rows["memory.fill"]
-    assert "mem" in regions(fill["writes"]), fill
+    assert any(r.startswith("mem(") for r in regions(fill["writes"])), fill
     assert fill["pops"] == "3" and fill["pushes"] == "0", fill
     assert fill["mayTrap"] == "true", fill
 
     call = rows["call"]
     assert call["mayDiverge"] == "true", call
     assert call["mayTrap"] == "true", call
-    assert regions(call["reads"]) == {"glob(*)", "mem", "table"}, call
-    assert regions(call["writes"]) == {"glob(*)", "mem", "table"}, call
+    assert call["mayThrow"] == "true", call
+    assert call["mayNondet"] == "true", call
+    assert regions(call["reads"]) == {
+        "glob(*)",
+        "mem(*)",
+        "table",
+        "elem",
+        "data",
+        "struct",
+        "array",
+        "exn",
+    }, call
+    assert regions(call["writes"]) == regions(call["reads"]), call
     assert call["pops"] == "*" and call["pushes"] == "*", call
+
+    if "memory.grow" in rows:
+        grow = rows["memory.grow"]
+        assert grow["mayTrap"] == "false", grow
+        assert grow["mayNondet"] == "true", grow
+        assert any(r.startswith("mem(") for r in regions(grow["reads"])), grow
+        assert any(r.startswith("mem(") for r in regions(grow["writes"])), grow
+
+    if "data.drop" in rows:
+        drop = rows["data.drop"]
+        assert "data" in regions(drop["writes"]), drop
+
+    if "struct.get" in rows:
+        sg = rows["struct.get"]
+        assert "struct" in regions(sg["reads"]), sg
+        assert sg["mayTrap"] == "true", sg
+
+    if "struct.new" in rows:
+        sn = rows["struct.new"]
+        assert regions(sn["reads"]) == set(), sn
+        assert regions(sn["writes"]) == set(), sn
+        assert sn["mayNondet"] == "true", sn
+
+    if "throw" in rows:
+        throw = rows["throw"]
+        assert "exn" in regions(throw["writes"]), throw
+        assert throw["mayThrow"] == "true", throw
 
     print("effects invariants OK")
 

@@ -15,8 +15,13 @@ type region =
   | Local of string
   | Glob of string
   | GlobStar
-  | Mem
+  | Mem of string
   | Table
+  | Elem
+  | Data
+  | Struct
+  | Array
+  | Exn
 
 type summary = {
   name : string;
@@ -25,7 +30,9 @@ type summary = {
   reads : region list;
   writes : region list;
   may_trap : bool;
+  may_throw : bool;
   may_diverge : bool;
+  may_nondet : bool;
 }
 
 let string_of_arity = function
@@ -37,19 +44,33 @@ let region_rank = function
   | Local _ -> 0
   | Glob _ -> 1
   | GlobStar -> 2
-  | Mem -> 3
+  | Mem _ -> 3
   | Table -> 4
+  | Elem -> 5
+  | Data -> 6
+  | Struct -> 7
+  | Array -> 8
+  | Exn -> 9
 
 let string_of_region = function
   | Local x -> "local(" ^ x ^ ")"
   | Glob x -> "glob(" ^ x ^ ")"
   | GlobStar -> "glob(*)"
-  | Mem -> "mem"
+  | Mem x -> "mem(" ^ x ^ ")"
   | Table -> "table"
+  | Elem -> "elem"
+  | Data -> "data"
+  | Struct -> "struct"
+  | Array -> "array"
+  | Exn -> "exn"
 
 let cmp_region a b =
   let c = compare (region_rank a) (region_rank b) in
-  if c <> 0 then c else String.compare (string_of_region a) (string_of_region b)
+  if c <> 0 then c else
+  match a, b with
+  | Mem x, Mem y -> String.compare x y
+  | Local x, Local y | Glob x, Glob y -> String.compare x y
+  | _ -> 0
 
 let string_of_regions rs =
   List.sort_uniq cmp_region rs |> List.map string_of_region |> String.concat ";"
@@ -134,7 +155,7 @@ let control_heads = [
   "BR"; "BR_IF"; "BR_TABLE";
   "BR_ON_NULL"; "BR_ON_NON_NULL"; "BR_ON_CAST"; "BR_ON_CAST_FAIL";
   "RETURN"; "RETURN_CALL"; "RETURN_CALL_INDIRECT"; "RETURN_CALL_REF";
-  "TRY"; "TRY_TABLE"; "CATCH"; "CATCH_ALL"; "THROW"; "THROW_REF"; "RETHROW";
+  "TRY"; "TRY_TABLE"; "CATCH"; "CATCH_ALL"; "RETHROW";
 ]
 
 let is_control head =
@@ -191,12 +212,19 @@ let region_list s = RSet.elements s
 let write_defs = [
   "with_local"; "with_global"; "with_mem"; "with_meminst";
   "with_table"; "with_tableinst";
+  "with_elem"; "with_data"; "with_struct"; "with_array";
+  "add_exninst";
 ]
-let read_defs = ["local"; "global"; "mem"; "table"; "meminst"; "tableinst"]
+let read_defs = [
+  "local"; "global"; "mem"; "table"; "meminst"; "tableinst";
+  "elem"; "data"; "structinst"; "arrayinst"; "eleminst"; "datainst"; "exninst";
+]
 
 let idx_name e =
   match (strip e).it with
   | VarE x -> x.it
+  | NumE (`Nat z) -> Z.to_string z
+  | NumE (`Int z) -> Z.to_string z
   | _ -> "*"
 
 let exp_of_arg = function
@@ -213,10 +241,41 @@ let region_of_call id args ~write =
   | "local", false | "with_local", true -> Some (Local (nth_exp args 1))
   | "global", false | "with_global", true -> Some (Glob (nth_exp args 1))
   | "mem", false | "meminst", false
-  | "with_mem", true | "with_meminst", true -> Some Mem
+  | "with_mem", true | "with_meminst", true -> Some (Mem (nth_exp args 1))
   | "table", false | "tableinst", false
   | "with_table", true | "with_tableinst", true -> Some Table
+  | "elem", false | "eleminst", false | "with_elem", true -> Some Elem
+  | "data", false | "datainst", false | "with_data", true -> Some Data
+  | "structinst", false | "with_struct", true -> Some Struct
+  | "arrayinst", false | "with_array", true -> Some Array
+  | "exninst", false | "add_exninst", true -> Some Exn
   | _ -> None
+
+let collect_effect_flags e =
+  let may_throw = ref false in
+  let may_nondet = ref false in
+  iter_exp (fun e ->
+    match e.it with
+    | CallE (id, _) ->
+      (match id.it with
+       | "add_exninst" -> may_throw := true
+       | "add_structinst" | "add_arrayinst" -> may_nondet := true
+       | _ -> ())
+    | _ -> ()
+  ) e;
+  (!may_throw, !may_nondet)
+
+let collect_flags_prems prems =
+  let tr = ref false in
+  let nd = ref false in
+  List.iter (fun p ->
+    iter_prem (fun e ->
+      let tr', nd' = collect_effect_flags e in
+      tr := !tr || tr';
+      nd := !nd || nd'
+    ) p
+  ) prems;
+  (!tr, !nd)
 
 let collect_regions e =
   let reads = ref RSet.empty in
@@ -683,17 +742,22 @@ type ctor_info = {
   reads : RSet.t;
   writes : RSet.t;
   trap : bool;
+  may_throw : bool;
+  may_nondet : bool;
   residuals : string list;
 }
 
 let empty_info = {
-  reads = RSet.empty; writes = RSet.empty; trap = false; residuals = [];
+  reads = RSet.empty; writes = RSet.empty; trap = false;
+  may_throw = false; may_nondet = false; residuals = [];
 }
 
 let union_info a b = {
   reads = RSet.union a.reads b.reads;
   writes = RSet.union a.writes b.writes;
   trap = a.trap || b.trap;
+  may_throw = a.may_throw || b.may_throw;
+  may_nondet = a.may_nondet || b.may_nondet;
   residuals = List.sort_uniq String.compare (a.residuals @ b.residuals);
 }
 
@@ -717,6 +781,8 @@ let analyze_rule rule =
       let rr, rw = collect_regions rhs in
       let pr, pw = collect_regions_prems prems in
       let lr, lw = collect_regions lhs in
+      let fr, fn = collect_effect_flags rhs in
+      let prf, pnf = collect_flags_prems prems in
       Some {
         head = h;
         focus;
@@ -724,6 +790,8 @@ let analyze_rule rule =
           reads = RSet.union pr (RSet.union rr lr);
           writes = RSet.union pw (RSet.union rw lw);
           trap = rhs_has_trap rhs;
+          may_throw = fr || prf;
+          may_nondet = fn || pnf;
           residuals = residual_heads rhs;
         };
         prems;
@@ -734,9 +802,15 @@ let index_step_rules env =
   |> List.filter_map analyze_rule
 
 let call_info = {
-  reads = RSet.of_list [GlobStar; Mem; Table];
-  writes = RSet.of_list [GlobStar; Mem; Table];
+  reads = RSet.of_list [
+    GlobStar; Mem "*"; Table; Elem; Data; Struct; Array; Exn;
+  ];
+  writes = RSet.of_list [
+    GlobStar; Mem "*"; Table; Elem; Data; Struct; Array; Exn;
+  ];
   trap = true;
+  may_throw = true;
+  may_nondet = true;
   residuals = [];
 }
 
@@ -763,7 +837,9 @@ let ctor_fixpoint (indexed : step_row list) =
       in
       if not (RSet.equal acc.reads info.reads
               && RSet.equal acc.writes info.writes
-              && acc.trap = info.trap) then begin
+              && acc.trap = info.trap
+              && acc.may_throw = info.may_throw
+              && acc.may_nondet = info.may_nondet) then begin
         Hashtbl.replace tbl h {acc with residuals = info.residuals};
         changed := true
       end
@@ -822,8 +898,33 @@ let merge_summary a b = {
   reads = union_regions a.reads b.reads;
   writes = union_regions a.writes b.writes;
   may_trap = a.may_trap || b.may_trap;
+  may_throw = a.may_throw || b.may_throw;
   may_diverge = a.may_diverge || b.may_diverge;
+  may_nondet = a.may_nondet || b.may_nondet;
 }
+
+let is_throw_head head = head = "THROW" || head = "THROW_REF"
+
+let is_nondet_head head =
+  head = "MEMORY.GROW" || head = "TABLE.GROW"
+  || contains_sub (String.uppercase_ascii head) "RELAXED" 0
+
+let alloc_heads = [
+  "STRUCT.NEW"; "STRUCT.NEW_DEFAULT";
+  "ARRAY.NEW"; "ARRAY.NEW_DEFAULT"; "ARRAY.NEW_FIXED";
+  "ARRAY.NEW_DATA"; "ARRAY.NEW_ELEM";
+]
+
+let alloc_names = [
+  "struct.new"; "struct.new_default";
+  "array.new"; "array.new_default"; "array.new_fixed";
+  "array.new_data"; "array.new_elem";
+]
+
+let sanitize_summary s =
+  if List.mem s.name alloc_names then
+    {s with reads = []; writes = []}
+  else s
 
 let extract script =
   let env = Il.Env.env_of_script script in
@@ -835,10 +936,16 @@ let extract script =
       let head = case_head variant in
       if head = "" || is_control head then None else
       let info =
-        if is_call head then call_info
-        else match Hashtbl.find_opt ctor_tbl head with
-        | Some i -> i
-        | None -> empty_info
+        let info =
+          if is_call head then call_info
+          else match Hashtbl.find_opt ctor_tbl head with
+          | Some i -> i
+          | None -> empty_info
+        in
+        if is_call head then info else
+        if List.mem head alloc_heads then
+          {info with reads = RSet.empty; writes = RSet.empty}
+        else info
       in
       let pops, pushes = lookup_arity env variant in
       let pops, pushes =
@@ -855,7 +962,11 @@ let extract script =
         writes = region_list info.writes;
         may_trap =
           if is_call head then true else variant_trap env variant indexed;
+        may_throw =
+          info.may_throw || is_call head || is_throw_head head;
         may_diverge = is_call head;
+        may_nondet =
+          info.may_nondet || is_call head || is_nondet_head head;
       }
     ) variants
   in
@@ -866,7 +977,7 @@ let extract script =
     | None -> Hashtbl.add tbl s.name s; order := s.name :: !order
     | Some prev -> Hashtbl.replace tbl s.name (merge_summary prev s)
   ) rows;
-  List.rev !order |> List.map (Hashtbl.find tbl)
+  List.rev !order |> List.map (Hashtbl.find tbl) |> List.map sanitize_summary
 
 
 (* ===== Closed atom semantics for drop, locals, nop, and globals ===== *)
