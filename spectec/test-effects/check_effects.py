@@ -79,14 +79,34 @@ def main(path: str) -> None:
 
     if "struct.new" in rows:
         sn = rows["struct.new"]
-        assert regions(sn["reads"]) == set(), sn
-        assert regions(sn["writes"]) == set(), sn
-        assert sn["mayNondet"] == "true", sn
+        assert regions(sn["reads"]) == {"struct"}, sn
+        assert regions(sn["writes"]) == {"struct"}, sn
+        assert sn["mayNondet"] == "false", sn
 
     if "throw" in rows:
         throw = rows["throw"]
-        assert "exn" in regions(throw["writes"]), throw
+        assert regions(throw["reads"]) == {"exn"}, throw
+        assert regions(throw["writes"]) == {"exn"}, throw
         assert throw["mayThrow"] == "true", throw
+        assert throw["mayNondet"] == "false", throw
+
+    if "array.new_data" in rows:
+        ad = rows["array.new_data"]
+        assert regions(ad["writes"]) == {"array"}, ad
+        assert "data" in regions(ad["reads"]), ad
+        assert "array" in regions(ad["reads"]), ad
+        assert ad["mayNondet"] == "false", ad
+
+    if "array.new_elem" in rows:
+        ae = rows["array.new_elem"]
+        assert regions(ae["writes"]) == {"array"}, ae
+        assert "elem" in regions(ae["reads"]), ae
+        assert "array" in regions(ae["reads"]), ae
+        assert ae["mayNondet"] == "false", ae
+
+    relaxed = [n for n in rows if "relaxed" in n]
+    for n in relaxed:
+        assert rows[n]["mayNondet"] == "false", rows[n]
 
     print("effects invariants OK")
 

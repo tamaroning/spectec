@@ -213,7 +213,7 @@ let write_defs = [
   "with_local"; "with_global"; "with_mem"; "with_meminst";
   "with_table"; "with_tableinst";
   "with_elem"; "with_data"; "with_struct"; "with_array";
-  "add_exninst";
+  "add_structinst"; "add_arrayinst"; "add_exninst";
 ]
 let read_defs = [
   "local"; "global"; "mem"; "table"; "meminst"; "tableinst";
@@ -246,47 +246,27 @@ let region_of_call id args ~write =
   | "with_table", true | "with_tableinst", true -> Some Table
   | "elem", false | "eleminst", false | "with_elem", true -> Some Elem
   | "data", false | "datainst", false | "with_data", true -> Some Data
-  | "structinst", false | "with_struct", true -> Some Struct
-  | "arrayinst", false | "with_array", true -> Some Array
+  | "structinst", false | "with_struct", true | "add_structinst", true -> Some Struct
+  | "arrayinst", false | "with_array", true | "add_arrayinst", true -> Some Array
   | "exninst", false | "add_exninst", true -> Some Exn
   | _ -> None
 
-let collect_effect_flags e =
-  let may_throw = ref false in
-  let may_nondet = ref false in
-  iter_exp (fun e ->
-    match e.it with
-    | CallE (id, _) ->
-      (match id.it with
-       | "add_exninst" -> may_throw := true
-       | "add_structinst" | "add_arrayinst" -> may_nondet := true
-       | _ -> ())
-    | _ -> ()
-  ) e;
-  (!may_throw, !may_nondet)
-
-let collect_flags_prems prems =
-  let tr = ref false in
-  let nd = ref false in
-  List.iter (fun p ->
-    iter_prem (fun e ->
-      let tr', nd' = collect_effect_flags e in
-      tr := !tr || tr';
-      nd := !nd || nd'
-    ) p
-  ) prems;
-  (!tr, !nd)
-
+(* Append helpers also read the frontier length; count them as reads too. *)
 let collect_regions e =
   let reads = ref RSet.empty in
   let writes = ref RSet.empty in
   iter_exp (fun e ->
     match e.it with
     | CallE (id, args) ->
-      if List.mem id.it write_defs then
+      if List.mem id.it write_defs then begin
         Option.iter (fun r -> writes := RSet.add r !writes)
-          (region_of_call id args ~write:true)
-      else if List.mem id.it read_defs then
+          (region_of_call id args ~write:true);
+        (match id.it with
+         | "add_structinst" | "add_arrayinst" | "add_exninst" ->
+           Option.iter (fun r -> reads := RSet.add r !reads)
+             (region_of_call id args ~write:true)
+         | _ -> ())
+      end else if List.mem id.it read_defs then
         Option.iter (fun r -> reads := RSet.add r !reads)
           (region_of_call id args ~write:false)
     | _ -> ()
@@ -304,6 +284,22 @@ let collect_regions_prems prems =
     ) p;
     !acc_r, !acc_w
   ) (RSet.empty, RSet.empty) prems
+
+let collect_effect_flags e =
+  let may_throw = ref false in
+  iter_exp (fun e ->
+    match e.it with
+    | CallE (id, _) when id.it = "add_exninst" -> may_throw := true
+    | _ -> ()
+  ) e;
+  !may_throw
+
+let collect_flags_prems prems =
+  let tr = ref false in
+  List.iter (fun p ->
+    iter_prem (fun e -> tr := !tr || collect_effect_flags e) p
+  ) prems;
+  !tr
 
 (* ===== Unification ===== *)
 
@@ -764,9 +760,26 @@ let union_info a b = {
 type step_row = {
   head : string;
   focus : exp;
+  lhs_sig : string;
   info : ctor_info;
   prems : prem list;
 }
+
+(* Coarse LHS shape: value constructors before the focused instruction.
+   Distinguishes REF.NULL_ADDR vs REF.STRUCT_ADDR so trap/success pairs
+   are not treated as overlapping; grow succeed/fail share a signature. *)
+let lhs_value_sig lhs focus =
+  let prefix =
+    match List.rev (seq_of_side lhs) with
+    | f :: pref when case_head f = case_head focus -> List.rev pref
+    | _ -> []
+  in
+  prefix
+  |> List.map (fun e ->
+      match case_head e with
+      | "" -> "_"
+      | h -> h)
+  |> String.concat "/"
 
 let analyze_rule rule =
   let e, prems = rule_expr rule in
@@ -781,17 +794,18 @@ let analyze_rule rule =
       let rr, rw = collect_regions rhs in
       let pr, pw = collect_regions_prems prems in
       let lr, lw = collect_regions lhs in
-      let fr, fn = collect_effect_flags rhs in
-      let prf, pnf = collect_flags_prems prems in
+      let fr = collect_effect_flags rhs in
+      let prf = collect_flags_prems prems in
       Some {
         head = h;
         focus;
+        lhs_sig = lhs_value_sig lhs focus;
         info = {
           reads = RSet.union pr (RSet.union rr lr);
           writes = RSet.union pw (RSet.union rw lw);
           trap = rhs_has_trap rhs;
           may_throw = fr || prf;
-          may_nondet = fn || pnf;
+          may_nondet = false;
           residuals = residual_heads rhs;
         };
         prems;
@@ -905,26 +919,49 @@ let merge_summary a b = {
 
 let is_throw_head head = head = "THROW" || head = "THROW_REF"
 
-let is_nondet_head head =
-  head = "MEMORY.GROW" || head = "TABLE.GROW"
-  || contains_sub (String.uppercase_ascii head) "RELAXED" 0
+(* Deterministic-profile default: relaxed SIMD stays ¬mayNondet, by name
+   (call is the dual hardcode that forces true). *)
+let is_relaxed_variant e =
+  List.exists (fun t ->
+    contains_sub (String.uppercase_ascii t) "RELAXED" 0
+  ) (atom_tokens e [])
 
-let alloc_heads = [
-  "STRUCT.NEW"; "STRUCT.NEW_DEFAULT";
-  "ARRAY.NEW"; "ARRAY.NEW_DEFAULT"; "ARRAY.NEW_FIXED";
-  "ARRAY.NEW_DATA"; "ARRAY.NEW_ELEM";
-]
+let is_relaxed_name name =
+  contains_sub (String.lowercase_ascii name) "relaxed" 0
 
-let alloc_names = [
-  "struct.new"; "struct.new_default";
-  "array.new"; "array.new_default"; "array.new_fixed";
-  "array.new_data"; "array.new_elem";
-]
+(* Grow-style overlap: a rule with no side conditions alongside one with
+   some (fail vs succeed). Broader subset would mark every oob/success
+   pair nondeterministic. `otherwise` vs `if` stays exclusive. *)
+let prem_keys prems =
+  List.filter_map (fun p ->
+    match p.it with
+    | ElsePr -> None
+    | _ -> Some (Il.Print.string_of_prem p)
+  ) prems
+  |> List.sort_uniq String.compare
 
-let sanitize_summary s =
-  if List.mem s.name alloc_names then
-    {s with reads = []; writes = []}
-  else s
+let has_else_prem prems =
+  List.exists (fun p -> match p.it with ElsePr -> true | _ -> false) prems
+
+let positively_overlaps prems1 prems2 =
+  let s1 = prem_keys prems1 in
+  let s2 = prem_keys prems2 in
+  if (has_else_prem prems1 && s2 <> []) || (has_else_prem prems2 && s1 <> []) then
+    false
+  else
+    (s1 = [] && s2 <> []) || (s2 = [] && s1 <> [])
+
+let head_has_overlapping_rules (indexed : step_row list) head =
+  let rs = List.filter (fun r -> r.head = head) indexed in
+  let rec pairs = function
+    | [] | [_] -> false
+    | a :: rest ->
+      List.exists (fun b ->
+        a.lhs_sig = b.lhs_sig && positively_overlaps a.prems b.prems
+      ) rest
+      || pairs rest
+  in
+  pairs rs
 
 let extract script =
   let env = Il.Env.env_of_script script in
@@ -936,16 +973,10 @@ let extract script =
       let head = case_head variant in
       if head = "" || is_control head then None else
       let info =
-        let info =
-          if is_call head then call_info
-          else match Hashtbl.find_opt ctor_tbl head with
-          | Some i -> i
-          | None -> empty_info
-        in
-        if is_call head then info else
-        if List.mem head alloc_heads then
-          {info with reads = RSet.empty; writes = RSet.empty}
-        else info
+        if is_call head then call_info
+        else match Hashtbl.find_opt ctor_tbl head with
+        | Some i -> i
+        | None -> empty_info
       in
       let pops, pushes = lookup_arity env variant in
       let pops, pushes =
@@ -955,8 +986,10 @@ let extract script =
         | "CALL_INDIRECT" -> (StarPlus 1, Star)
         | _ -> (pops, pushes)
       in
+      let name = instr_name variant in
+      let relaxed = is_relaxed_variant variant || is_relaxed_name name in
       Some {
-        name = instr_name variant;
+        name;
         pops; pushes;
         reads = region_list info.reads;
         writes = region_list info.writes;
@@ -966,7 +999,11 @@ let extract script =
           info.may_throw || is_call head || is_throw_head head;
         may_diverge = is_call head;
         may_nondet =
-          info.may_nondet || is_call head || is_nondet_head head;
+          (* Name hardcodes: calls ⊤; relaxed SIMD ⊥ (deterministic profile). *)
+          if relaxed then false
+          else
+            info.may_nondet || is_call head
+            || head_has_overlapping_rules indexed head;
       }
     ) variants
   in
@@ -977,7 +1014,7 @@ let extract script =
     | None -> Hashtbl.add tbl s.name s; order := s.name :: !order
     | Some prev -> Hashtbl.replace tbl s.name (merge_summary prev s)
   ) rows;
-  List.rev !order |> List.map (Hashtbl.find tbl) |> List.map sanitize_summary
+  List.rev !order |> List.map (Hashtbl.find tbl)
 
 
 (* ===== Closed atom semantics for drop, locals, nop, and globals ===== *)
