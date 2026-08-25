@@ -10,9 +10,9 @@ type region =
   | Glob of string
   | GlobStar
   | Mem of string
-  | Table
-  | Elem
-  | Data
+  | Table of string
+  | Elem of string
+  | Data of string
   | Struct
   | Array
   | Exn

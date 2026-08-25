@@ -16,9 +16,9 @@ type region =
   | Glob of string
   | GlobStar
   | Mem of string
-  | Table
-  | Elem
-  | Data
+  | Table of string
+  | Elem of string
+  | Data of string
   | Struct
   | Array
   | Exn
@@ -45,9 +45,9 @@ let region_rank = function
   | Glob _ -> 1
   | GlobStar -> 2
   | Mem _ -> 3
-  | Table -> 4
-  | Elem -> 5
-  | Data -> 6
+  | Table _ -> 4
+  | Elem _ -> 5
+  | Data _ -> 6
   | Struct -> 7
   | Array -> 8
   | Exn -> 9
@@ -57,9 +57,9 @@ let string_of_region = function
   | Glob x -> "glob(" ^ x ^ ")"
   | GlobStar -> "glob(*)"
   | Mem x -> "mem(" ^ x ^ ")"
-  | Table -> "table"
-  | Elem -> "elem"
-  | Data -> "data"
+  | Table x -> "table(" ^ x ^ ")"
+  | Elem x -> "elem(" ^ x ^ ")"
+  | Data x -> "data(" ^ x ^ ")"
   | Struct -> "struct"
   | Array -> "array"
   | Exn -> "exn"
@@ -68,7 +68,7 @@ let cmp_region a b =
   let c = compare (region_rank a) (region_rank b) in
   if c <> 0 then c else
   match a, b with
-  | Mem x, Mem y -> String.compare x y
+  | Mem x, Mem y | Table x, Table y | Elem x, Elem y | Data x, Data y
   | Local x, Local y | Glob x, Glob y -> String.compare x y
   | _ -> 0
 
@@ -243,9 +243,9 @@ let region_of_call id args ~write =
   | "mem", false | "meminst", false
   | "with_mem", true | "with_meminst", true -> Some (Mem (nth_exp args 1))
   | "table", false | "tableinst", false
-  | "with_table", true | "with_tableinst", true -> Some Table
-  | "elem", false | "eleminst", false | "with_elem", true -> Some Elem
-  | "data", false | "datainst", false | "with_data", true -> Some Data
+  | "with_table", true | "with_tableinst", true -> Some (Table (nth_exp args 1))
+  | "elem", false | "eleminst", false | "with_elem", true -> Some (Elem (nth_exp args 1))
+  | "data", false | "datainst", false | "with_data", true -> Some (Data (nth_exp args 1))
   | "structinst", false | "with_struct", true | "add_structinst", true -> Some Struct
   | "arrayinst", false | "with_array", true | "add_arrayinst", true -> Some Array
   | "exninst", false | "add_exninst", true -> Some Exn
@@ -817,10 +817,10 @@ let index_step_rules env =
 
 let call_info = {
   reads = RSet.of_list [
-    GlobStar; Mem "*"; Table; Elem; Data; Struct; Array; Exn;
+    GlobStar; Mem "*"; Table "*"; Elem "*"; Data "*"; Struct; Array; Exn;
   ];
   writes = RSet.of_list [
-    GlobStar; Mem "*"; Table; Elem; Data; Struct; Array; Exn;
+    GlobStar; Mem "*"; Table "*"; Elem "*"; Data "*"; Struct; Array; Exn;
   ];
   trap = true;
   may_throw = true;

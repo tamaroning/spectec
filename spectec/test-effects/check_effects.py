@@ -51,9 +51,9 @@ def main(path: str) -> None:
     assert regions(call["reads"]) == {
         "glob(*)",
         "mem(*)",
-        "table",
-        "elem",
-        "data",
+        "table(*)",
+        "elem(*)",
+        "data(*)",
         "struct",
         "array",
         "exn",
@@ -70,7 +70,15 @@ def main(path: str) -> None:
 
     if "data.drop" in rows:
         drop = rows["data.drop"]
-        assert "data" in regions(drop["writes"]), drop
+        assert any(r.startswith("data(") for r in regions(drop["writes"])), drop
+
+    if "elem.drop" in rows:
+        edrop = rows["elem.drop"]
+        assert any(r.startswith("elem(") for r in regions(edrop["writes"])), edrop
+
+    if "table.get" in rows:
+        tget = rows["table.get"]
+        assert any(r.startswith("table(") for r in regions(tget["reads"])), tget
 
     if "struct.get" in rows:
         sg = rows["struct.get"]
@@ -93,14 +101,14 @@ def main(path: str) -> None:
     if "array.new_data" in rows:
         ad = rows["array.new_data"]
         assert regions(ad["writes"]) == {"array"}, ad
-        assert "data" in regions(ad["reads"]), ad
+        assert any(r.startswith("data(") for r in regions(ad["reads"])), ad
         assert "array" in regions(ad["reads"]), ad
         assert ad["mayNondet"] == "false", ad
 
     if "array.new_elem" in rows:
         ae = rows["array.new_elem"]
         assert regions(ae["writes"]) == {"array"}, ae
-        assert "elem" in regions(ae["reads"]), ae
+        assert any(r.startswith("elem(") for r in regions(ae["reads"])), ae
         assert "array" in regions(ae["reads"]), ae
         assert ae["mayNondet"] == "false", ae
 
