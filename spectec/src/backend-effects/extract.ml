@@ -150,12 +150,16 @@ let rec iter_prem f p =
   | IterPr (p', _) | NegPr p' -> iter_prem f p'
   | ElsePr -> ()
 
+(* Never-fall-through / handler / block structure: no effect-summary row.
+   THROW / THROW_REF jump like BR (uncaught → invoke abort, or to a handler);
+   mayThrow on summaries arises only from CALL* in the straight-line fragment. *)
 let control_heads = [
   "BLOCK"; "LOOP"; "IF"; "ELSE"; "END";
   "BR"; "BR_IF"; "BR_TABLE";
   "BR_ON_NULL"; "BR_ON_NON_NULL"; "BR_ON_CAST"; "BR_ON_CAST_FAIL";
   "RETURN"; "RETURN_CALL"; "RETURN_CALL_INDIRECT"; "RETURN_CALL_REF";
-  "TRY"; "TRY_TABLE"; "CATCH"; "CATCH_ALL"; "RETHROW";
+  "TRY"; "TRY_TABLE"; "CATCH"; "CATCH_ALL";
+  "THROW"; "THROW_REF"; "RETHROW";
 ]
 
 let is_control head =
@@ -917,8 +921,6 @@ let merge_summary a b = {
   may_nondet = a.may_nondet || b.may_nondet;
 }
 
-let is_throw_head head = head = "THROW" || head = "THROW_REF"
-
 (* Deterministic-profile default: relaxed SIMD stays ¬mayNondet, by name
    (call is the dual hardcode that forces true). *)
 let is_relaxed_variant e =
@@ -996,7 +998,7 @@ let extract script =
         may_trap =
           if is_call head then true else variant_trap env variant indexed;
         may_throw =
-          info.may_throw || is_call head || is_throw_head head;
+          info.may_throw || is_call head;
         may_diverge = is_call head;
         may_nondet =
           (* Name hardcodes: calls ⊤; relaxed SIMD ⊥ (deterministic profile). *)

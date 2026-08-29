@@ -3,7 +3,19 @@
 import csv
 import sys
 
-CONTROL = {"block", "loop", "if", "br", "br_if", "br_table", "return"}
+CONTROL = {
+    "block",
+    "loop",
+    "if",
+    "br",
+    "br_if",
+    "br_table",
+    "return",
+    "throw",
+    "throw_ref",
+    "rethrow",
+}
+CALLS = {"call", "call_indirect", "call_ref"}
 
 
 def regions(cell: str) -> set[str]:
@@ -91,12 +103,11 @@ def main(path: str) -> None:
         assert regions(sn["writes"]) == {"struct"}, sn
         assert sn["mayNondet"] == "false", sn
 
-    if "throw" in rows:
-        throw = rows["throw"]
-        assert regions(throw["reads"]) == {"exn"}, throw
-        assert regions(throw["writes"]) == {"exn"}, throw
-        assert throw["mayThrow"] == "true", throw
-        assert throw["mayNondet"] == "false", throw
+    for name, row in rows.items():
+        if row["mayThrow"] == "true":
+            assert name in CALLS, f"mayThrow only on calls, got {name}"
+        if row["mayDiverge"] == "true":
+            assert name in CALLS, f"mayDiverge only on calls, got {name}"
 
     if "array.new_data" in rows:
         ad = rows["array.new_data"]

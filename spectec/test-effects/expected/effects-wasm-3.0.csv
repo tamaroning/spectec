@@ -3,8 +3,6 @@ unreachable,0,0,,,true,false,false,false
 nop,0,0,,,false,false,false,false
 drop,1,0,,,false,false,false,false
 select,3,1,,,false,false,false,false
-throw,*,*,exn,exn,false,true,false,false
-throw_ref,*+2,*,,,true,true,false,false
 call,*,*,glob(*);mem(*);table(*);elem(*);data(*);struct;array;exn,glob(*);mem(*);table(*);elem(*);data(*);struct;array;exn,true,true,true,true
 call_indirect,*+1,*,glob(*);mem(*);table(*);elem(*);data(*);struct;array;exn,glob(*);mem(*);table(*);elem(*);data(*);struct;array;exn,true,true,true,true
 call_ref,*,*,glob(*);mem(*);table(*);elem(*);data(*);struct;array;exn,glob(*);mem(*);table(*);elem(*);data(*);struct;array;exn,true,true,true,true
